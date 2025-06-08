@@ -1,0 +1,15 @@
+Tipos de Nós:
+Números: Rosa claro (#FFB6C1)
+Identificadores: Verde claro (#98FB98)
+Operadores: Azul céu (#87CEEB)
+Condicionais (if): Ameixa (#DDA0DD)
+Loops (for): Amarelo claro (#F0E68C)
+Strings: Salmão claro (#FFA07A)
+Outros: Lavanda (#E6E6FA)
+
+Tipos de Dados (cor do texto):
+Inteiros: Azul (#0000FF)
+Floats: Verde (#008000)
+Booleanos: Roxo (#800080)
+Strings: Laranja (#FF4500)
+Outros: Preto (#000000)

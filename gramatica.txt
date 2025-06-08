@@ -1,0 +1,58 @@
+# Gramática Formal do Compilador
+
+## Terminais
+- INT: números inteiros
+- REAL: números reais
+- ID: identificadores
+- MEM: palavra-chave para memória
+- RES: palavra-chave para resultado
+- if, then, else: palavras-chave para condicionais
+- for, in, to, do: palavras-chave para loops
+- V: palavra-chave
+- OPERADORES: +, -, *, /, %, ^, |, <, >, ==, !=, <=, >=
+- (, ): parênteses
+
+## Não-Terminais
+- S: símbolo inicial
+- EXPR: expressão
+- OPERAND: operando
+- OPERATOR: operador
+- NUM: número
+
+## Regras de Produção
+
+1. S → EXPR
+2. EXPR → ( EXPR EXPR OPERATOR )
+3. EXPR → ( if EXPR then EXPR else EXPR )
+4. EXPR → ( for ID in EXPR to EXPR do EXPR )
+5. EXPR → OPERAND
+6. OPERAND → NUM
+7. OPERAND → ID
+8. OPERAND → MEM
+9. OPERAND → RES
+10. OPERATOR → + | - | * | / | % | ^ | | | < | > | == | != | <= | >=
+11. NUM → INT | REAL
+
+## Conjuntos FIRST
+
+FIRST(S) = { (, INT, REAL, ID, MEM, RES, if, for }
+FIRST(EXPR) = { (, INT, REAL, ID, MEM, RES, if, for }
+FIRST(OPERAND) = { (, INT, REAL, ID, MEM, RES }
+FIRST(OPERATOR) = { +, -, *, /, %, ^, |, <, >, ==, !=, <=, >= }
+FIRST(NUM) = { INT, REAL }
+
+## Conjuntos FOLLOW
+
+FOLLOW(S) = { $ }
+FOLLOW(EXPR) = { ), then, else, do, $ }
+FOLLOW(OPERAND) = { (, INT, REAL, ID, MEM, +, -, *, /, %, ^, |, <, >, ==, !=, <=, >= }
+FOLLOW(OPERATOR) = { ) }
+FOLLOW(NUM) = { ), MEM, RES, +, -, *, /, %, ^, |, <, >, ==, !=, <=, >= }
+
+## Observações
+- A gramática é LL(1)
+- Os operadores têm precedência implícita na estrutura da árvore sintática
+- A gramática suporta expressões aninhadas através de parênteses
+- O operador | representa divisão real (float)
+- O operador / representa divisão inteira
+- O operador ^ representa exponenciação 
