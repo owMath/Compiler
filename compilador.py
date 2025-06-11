@@ -434,6 +434,10 @@ class Parser:
             token = self.eat('número')
             try:
                 value = float(token.value)
+                # Preserva o tipo float se o número foi escrito com ponto decimal
+                if '.' in token.value:
+                    return NumberNode(value)
+                # Converte para int apenas se não tiver ponto decimal
                 if value.is_integer():
                     value = int(value)
                 return NumberNode(value)
@@ -1081,10 +1085,13 @@ def main():
                 ieee_hex = float_to_ieee754(float(result))
                 print(f"  {Fore.GREEN}Resultado: {result} [IEEE754: {ieee_hex}]{Style.RESET_ALL}")
                 
-                if isinstance(result, int) or (isinstance(result, float) and result.is_integer()):
+                # Usa o tipo inferido da AST para decidir se é int ou float
+                if ast.type == INT_TYPE:
                     tipo_str = 'i'
-                else:
+                elif ast.type == FLOAT_TYPE:
                     tipo_str = 'f'
+                else:
+                    tipo_str = '?'
                 
                 dot = ast.visualize()
                 dot.render(f'ast_{i+1}', format='png', cleanup=True)
