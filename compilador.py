@@ -408,7 +408,28 @@ class Parser:
             if op == '^': 
                 if not isinstance(b, int):
                      raise ValueError("Expoente para '^' deve ser inteiro")
-                return a ** b
+                if a == 0 and b == 0:
+                    return 1.0
+                if a == 0 or b == 0:
+                    return 0.0
+                if a < 0 and b < 0:
+                    return (-(-a) ** b)
+                if a < 0:
+                    return (-(-a) ** b)
+                if b < 0:
+                    return 1.0 / (-a ** -b)
+                if a == 1:
+                    return 1.0
+                if b == 1:
+                    return a
+                if a == -1 and b % 2 == 0:
+                    return 1.0
+                if a == -1 and b % 2 != 0:
+                    return -1.0
+                if b % 2 == 0:
+                    return (a ** b)
+                else:
+                    return (a ** b)
             if op in ['>', '<', '==', '!=', '<=', '>=']:
                 if not (isinstance(a, (int, float)) and isinstance(b, (int, float))):
                     raise ValueError(f"Operador '{op}' requer operandos numéricos")
@@ -686,7 +707,10 @@ class BinaryOpNode(ASTNode):
         elif self.value == '^':
             if right_type != INT_TYPE:
                 raise ValueError("Exponent for '^' must be an integer")
-            self.type = FLOAT_TYPE 
+            if left_type == INT_TYPE and right_type == INT_TYPE:
+                self.type = INT_TYPE
+            else:
+                self.type = FLOAT_TYPE
         elif left_type == FLOAT_TYPE or right_type == FLOAT_TYPE:
             self.type = FLOAT_TYPE
         else:
@@ -1085,13 +1109,22 @@ def main():
                 ieee_hex = float_to_ieee754(float(result))
                 print(f"  {Fore.GREEN}Resultado: {result} [IEEE754: {ieee_hex}]{Style.RESET_ALL}")
                 
-                # Usa o tipo inferido da AST para decidir se é int ou float
-                if ast.type == INT_TYPE:
-                    tipo_str = 'i'
-                elif ast.type == FLOAT_TYPE:
-                    tipo_str = 'f'
+                # Corrige: mostra o tipo do ramo realmente executado no if
+                tipo_str = '?'
+                if isinstance(ast, IfNode):
+                    cond = ast.children[0]
+                    then_branch = ast.children[1]
+                    else_branch = ast.children[2]
+                    cond_val = parser.eval_ast(cond)
+                    if bool(cond_val):
+                        tipo_str = 'i' if then_branch.type == INT_TYPE else 'f'
+                    else:
+                        tipo_str = 'i' if else_branch.type == INT_TYPE else 'f'
                 else:
-                    tipo_str = '?'
+                    if ast.type == INT_TYPE:
+                        tipo_str = 'i'
+                    elif ast.type == FLOAT_TYPE:
+                        tipo_str = 'f'
                 
                 dot = ast.visualize()
                 dot.render(f'ast_{i+1}', format='png', cleanup=True)
