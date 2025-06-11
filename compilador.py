@@ -376,7 +376,7 @@ class Parser:
                 n = int(self.eval_ast(node.children[0]))
                 if n < 0 or n >= len(self.resultados):
                     raise ValueError(f"Índice RES({n}) fora dos limites. Resultados disponíveis: {len(self.resultados)}")
-                result = self.resultados[-(n+1)]  # -1 é o último, -2 é o penúltimo, etc.
+                result = self.resultados[-(n)]  # retorna a função RES
                 self.resultados.append(result)
                 return result
             elif isinstance(node, StringNode):
