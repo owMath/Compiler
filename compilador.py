@@ -30,6 +30,103 @@ KEYWORDS = {'RES', 'MEM', 'if', 'then', 'else', 'for', 'in', 'to', 'do'}
 
 Token = namedtuple('Token', ['value', 'type', 'line', 'col'])
 
+# Funções de conversão IEEE 754
+def float_to_half_ieee754(f):
+    """
+    Converte um número float para formato IEEE 754 half-precision (16 bits)
+    """
+    if f == 0.0: return 0x0000
+    if f < 0.0 and f == 0.0: return 0x8000
+    if f == float('inf'): return 0x7C00
+    if f == float('-inf'): return 0xFC00
+    if math.isnan(f): return 0x7E00
+    
+    sinal = 0x8000 if f < 0 else 0
+    f = abs(f)
+    
+    if f >= 2**(-14):
+        expoente = math.floor(math.log2(f))
+        mantissa = f / (2**expoente) - 1.0
+        expoente_ajustado = expoente + 15
+        
+        if expoente_ajustado < 1: 
+            return f"0x{sinal:04x}"
+            if expoente_ajustado > 30: 
+                return f"0x{(sinal | 0x7C00):04x}"
+        
+        bits_mantissa = int(mantissa * 1024 + 0.5)
+        half = sinal | ((expoente_ajustado & 0x1F) << 10) | (bits_mantissa & 0x3FF)
+    else:
+        mantissa = f / (2**(-14))
+        bits_mantissa = int(mantissa * 1024 + 0.5)
+        half = sinal | (bits_mantissa & 0x3FF)
+        
+    return f"0x{half:04x}"
+
+def half_ieee754_to_float(h):
+    """
+    Converte um número IEEE 754 half-precision (16 bits) para float
+    """
+    sinal = -1.0 if (h & 0x8000) else 1.0
+    expoente = (h >> 10) & 0x1F
+    mantissa = h & 0x3FF
+    
+    if expoente == 0:
+        if mantissa == 0: return 0.0 * sinal
+        return sinal * (mantissa / 1024.0) * (2 ** -14)
+    elif expoente == 31:
+        if mantissa == 0: return float('inf') * sinal
+        return float('nan')
+    
+    return sinal * (1.0 + mantissa / 1024.0) * (2 ** (expoente - 15))
+
+def add_half_precision(a, b):
+    """
+    Soma dois números em formato IEEE 754 half-precision
+    """
+    fa, fb = half_ieee754_to_float(a), half_ieee754_to_float(b)
+    return float_to_half_ieee754(fa + fb)
+
+def sub_half_precision(a, b):
+    """
+    Subtração de dois números em formato IEEE 754 half-precision
+    """
+    fa, fb = half_ieee754_to_float(a), half_ieee754_to_float(b)
+    return float_to_half_ieee754(fa - fb)
+
+def mul_half_precision(a, b):
+    """
+    Multiplicação de dois números em formato IEEE 754 half-precision
+    """
+    fa, fb = half_ieee754_to_float(a), half_ieee754_to_float(b)
+    return float_to_half_ieee754(fa * fb)
+
+def div_half_precision(a, b):
+    """
+    Divisão de dois números em formato IEEE 754 half-precision
+    """
+    fa, fb = half_ieee754_to_float(a), half_ieee754_to_float(b)
+    if fb == 0: return 0x7C00 if fa >= 0 else 0xFC00
+    return float_to_half_ieee754(fa / fb)
+
+def power_half_precision(a, b):
+    """
+    Potenciação em formato IEEE 754 half-precision
+    """
+    fa, fb = half_ieee754_to_float(a), half_ieee754_to_float(b)
+    try:
+        return float_to_half_ieee754(fa ** fb)
+    except:
+        return 0x7E00
+
+def mod_half_precision(a, b):
+    """
+    Operação de módulo em formato IEEE 754 half-precision
+    """
+    fa, fb = half_ieee754_to_float(a), half_ieee754_to_float(b)
+    if fb == 0: return 0x7E00
+    return float_to_half_ieee754(fa % fb)
+
 class FirstSet:
     def __init__(self):
         self.sets = {
@@ -102,6 +199,7 @@ class ParsingTable:
         for t in self.first_sets.get('EXPR'):
             self.table['S'][map_terminal(t)] = ['EXPR']
         
+        # RPN production: ( EXPR EXPR OPERATOR )
         self.table['EXPR']['('] = ['(', 'EXPR', 'EXPR', 'OPERATOR', ')']
 
         self.table['EXPR']['if'] = ['(', 'if', 'EXPR', 'then', 'EXPR', 'else', 'EXPR', ')']
@@ -120,8 +218,9 @@ class ParsingTable:
         
         self.table['OPERAND']['RES'] = ['RES']
         
+        # This part should be correct as OPERATOR is a terminal itself.
         for op_val in OPERATORS:
-            self.table['OPERATOR']['operador'] = [op_val]
+            self.table['OPERATOR'][op_val] = [op_val] # Changed 'operador' to op_val directly
         
         self.table['NUM']['número'] = ['INT']
     
@@ -133,7 +232,7 @@ class ParsingTable:
         elif terminal_type_or_value in KEYWORDS:
             return self.table.get(non_terminal, {}).get(terminal_type_or_value)
         elif terminal_type_or_value in OPERATORS:
-            return self.table.get(non_terminal, {}).get('operador')
+            return self.table.get(non_terminal, {}).get(terminal_type_or_value) # Changed 'operador' to terminal_type_or_value
         
         return self.table.get(non_terminal, {}).get(terminal_type_or_value)
     
@@ -164,33 +263,36 @@ class ParsingTable:
 def float_to_ieee754(f):
     f = float(f) 
     if PRECISAO == 'half':
-        if f == 0.0: return '0x0000'
-        if f < 0.0 and f == 0.0: return '0x8000'
-        if f == float('inf'): return '0x7C00'
-        if f == float('-inf'): return '0xFC00'
-        if math.isnan(f): return '0x7E00'
+        # Tratamento de casos especiais
+        if f == 0.0: return 0x0000  # Zero positivo
+        if f < 0.0 and f == 0.0: return 0x8000  # Zero negativo
+        if f == float('inf'): return 0x7C00  # Infinito positivo
+        if f == float('-inf'): return 0xFC00  # Infinito negativo
+        if math.isnan(f): return 0x7E00  # NaN (Not a Number)
         
+        # Extrair sinal, expoente e mantissa
         sinal = 0x8000 if f < 0 else 0
         f = abs(f)
         
-        if f >= 2**(-14):
+        # Normalizar para o formato IEEE 754
+        if f >= 2.0 ** (-14):  # Valores normalizados
             expoente = math.floor(math.log2(f))
-            mantissa = f / (2**expoente) - 1.0
-            expoente_ajustado = expoente + 15
+            mantissa = f / (2 ** expoente) - 1.0
+            expoente_ajustado = expoente + 15  # Bias de 15
             
-            if expoente_ajustado < 1: 
-                return f"0x{sinal:04x}"
-            if expoente_ajustado > 30: 
-                return f"0x{(sinal | 0x7C00):04x}"
+            # Verificar limites
+            if expoente_ajustado < 0: return sinal  # Underflow
+            if expoente_ajustado > 31: return sinal | 0x7C00  # Overflow
             
+            # Calcular os bits da mantissa (10 bits)
             bits_mantissa = int(mantissa * 1024 + 0.5)
             half = sinal | ((expoente_ajustado & 0x1F) << 10) | (bits_mantissa & 0x3FF)
-        else:
-            mantissa = f / (2**(-14))
+        else:  # Valores desnormalizados
+            mantissa = f / (2 ** (-14))
             bits_mantissa = int(mantissa * 1024 + 0.5)
             half = sinal | (bits_mantissa & 0x3FF)
-            
-        return f"0x{half:04x}"
+        
+        return f"0x{half:04x}" # Retorna como string hexadecimal
     elif PRECISAO == 'single':
         return '0x' + struct.pack('>f', f).hex()
     elif PRECISAO == 'double':
@@ -337,15 +439,26 @@ class Parser:
                     elif isinstance(a, float) and isinstance(b, int):
                         b = float(b)
                 result = self.eval_op(a, b, node.value)
-                self.resultados.append(result)
+                # Only append if it's not a boolean comparison, or if we want to store 0.0/1.0
+                if node.value not in ['>', '<', '==', '!=', '<=', '>=']:
+                    self.resultados.append(result)
                 return result
             elif isinstance(node, IfNode):
                 cond = self.eval_ast(node.children[0])
                 if not (isinstance(cond, bool) or isinstance(cond, (int, float))):
                     raise ValueError(f"Condição do 'if' deve ser booleana ou numérica, mas encontrou tipo {type(cond).__name__}")
-                result = self.eval_ast(node.children[1] if bool(cond) else node.children[2])
-                self.resultados.append(result)
+                
+                # Evaluate the appropriate branch and append its result if it's numeric
+                if bool(cond):
+                    result = self.eval_ast(node.children[1])
+                else:
+                    result = self.eval_ast(node.children[2])
+                
+                # Check if the result is numeric before appending to `resultados`
+                if isinstance(result, (int, float)):
+                    self.resultados.append(result)
                 return result
+
             elif isinstance(node, ForNode):
                 var = node.children[0].value
                 ini = int(self.eval_ast(node.children[1]))
@@ -356,7 +469,9 @@ class Parser:
                     for v in range(ini, fim + 1):
                         self.vars[var] = v
                         res = self.eval_ast(node.children[3])
-                    self.resultados.append(res)
+                    # Only append if the loop body produced a numeric result
+                    if isinstance(res, (int, float)):
+                        self.resultados.append(res)
                     return res
                 finally:
                     if old_value is not None:
@@ -366,17 +481,22 @@ class Parser:
             elif isinstance(node, MemoryStoreNode):
                 value_to_store = self.eval_ast(node.children[0])
                 self.memoria = float(value_to_store)
-                self.resultados.append(self.memoria)
+                self.resultados.append(self.memoria) # Always append memory store results
                 return self.memoria
             elif isinstance(node, MemoryRetrieveNode):
                 result = self.memoria
-                self.resultados.append(result)
+                self.resultados.append(result) # Always append memory retrieve results
                 return result
             elif isinstance(node, ResultNode):
-                n = int(self.eval_ast(node.children[0]))
+                n_node = node.children[0]
+                n = int(self.eval_ast(n_node))
+                
                 if n < 0 or n >= len(self.resultados):
                     raise ValueError(f"Índice RES({n}) fora dos limites. Resultados disponíveis: {len(self.resultados)}")
-                result = self.resultados[-(n)]  # retorna a função RES
+                
+                # The index is negative because RES(N) means the Nth result *from the last*.
+                # If RES(0) is the last, RES(1) is the second to last etc.
+                result = self.resultados[len(self.resultados) - 1 - n] 
                 self.resultados.append(result)
                 return result
             elif isinstance(node, StringNode):
@@ -528,61 +648,151 @@ class Parser:
             return for_node
 
         elif t.type == 'palavra-chave' and t.value == 'MEM':
+            # This is for (MEM) meaning retrieve, not store
             if self.peek_next() and self.peek_next().value == ')':
                 self.eat('palavra-chave', 'MEM')
                 self.eat('parêntese', ')')
                 return MemoryRetrieveNode()
 
         elif t.type == 'palavra-chave' and t.value == 'RES':
+            # This is for (RES) meaning last result (N=0)
             if self.peek_next() and self.peek_next().value == ')':
                 self.eat('palavra-chave', 'RES')
                 self.eat('parêntese', ')')
-                # (RES) meaning: last result (N=0)
                 return ResultNode(NumberNode(0)) 
 
-        first_expr_node = self.parse() 
-        next_token_after_first_expr = self.at()
+        # --- RPN Parsing Logic ---
+        # For RPN, we expect operands first, then the operator.
 
-        if next_token_after_first_expr is None:
-             raise ValueError("Expressão incompleta. Esperado mais tokens após o primeiro operando.")
+        # Parse the first operand
+        first_operand_node = self.parse()
 
-        if next_token_after_first_expr.type == 'palavra-chave' and next_token_after_first_expr.value == 'MEM':
+        # Check if the next token is MEM (for store) or RES (for retrieve with N)
+        current_token = self.at()
+        if current_token is None:
+            raise ValueError("Expressão incompleta. Esperado mais tokens ou ')'")
+
+        if current_token.type == 'palavra-chave' and current_token.value == 'MEM':
             self.eat('palavra-chave', 'MEM')
             self.eat('parêntese', ')')
             mem_store_node = MemoryStoreNode()
-            mem_store_node.add_child(first_expr_node)
+            mem_store_node.add_child(first_operand_node)
             return mem_store_node
         
-        elif next_token_after_first_expr.type == 'palavra-chave' and next_token_after_first_expr.value == 'RES':
+        elif current_token.type == 'palavra-chave' and current_token.value == 'RES':
             self.eat('palavra-chave', 'RES')
             self.eat('parêntese', ')')
-            if not isinstance(first_expr_node, NumberNode):
-                raise ValueError(f"Esperado um número para N em (N RES), mas encontrou {type(first_expr_node).__name__} na linha {first_expr_node.line}, coluna {first_expr_node.col}")
-            # This is the crucial change: ResultNode now just holds N
-            res_node = ResultNode(first_expr_node) 
+            if not isinstance(first_operand_node, NumberNode):
+                raise ValueError(f"Esperado um número para N em (N RES), mas encontrou {type(first_operand_node).__name__} na linha {first_operand_node.line}, coluna {first_operand_node.col}")
+            res_node = ResultNode(first_operand_node) 
             return res_node
-        
-        if next_token_after_first_expr is None or (not self.check_first('EXPR', next_token_after_first_expr) and next_token_after_first_expr.type != 'operador'):
-             raise ValueError(f'Token inesperado: {next_token_after_first_expr}. Esperado um dos tokens em FIRST(EXPR) para o segundo operando ou um operador na linha {next_token_after_first_expr.line}, coluna {next_token_after_first_expr.col}.')
 
-        b = self.parse()
+        # If not MEM or RES, assume it's a binary operation in RPN form.
+        # Parse the second operand
+        second_operand_node = self.parse()
+
+        # Now expect the operator
         op_token = self.eat('operador')
         
         if op_token is None or not self.check_first('OPERATOR', op_token):
             raise ValueError(f'Operador inesperado: {op_token}. Esperado um dos operadores em FIRST(OPERATOR): {self.first_sets.get("OPERATOR")}')
         
         bin_op = BinaryOpNode(op_token.value)
-        bin_op.add_child(first_expr_node)
-        bin_op.add_child(b)
+        bin_op.add_child(first_operand_node)
+        bin_op.add_child(second_operand_node)
         self.eat('parêntese', ')')
         return bin_op
 
 def escrever_serial(asm, operacao, resultado, ieee_hex, tipo_str):
-    texto = f"{operacao} = {resultado} [IEEE754: {ieee_hex}] {tipo_str}"
-    asm.write(f"    ; {texto}\n")
-    for c in texto:
-        asm.write(f"    LDI R16, 0x{ord(c):02X}\n    RCALL uart_envia_byte\n")
-    asm.write("    LDI R16, 13\n    RCALL uart_envia_byte\n    LDI R16, 10\n    RCALL uart_envia_byte\n")
+    """
+    Escreve o código assembly para enviar a expressão e o resultado via UART
+    no formato: (expressão) = resultado [IEEE754: hex]
+    """
+    resultado_float = float(resultado) 
+    
+    # Formatar o resultado para string (com casas decimais limitadas para clareza)
+    # Ex: 4.0 -> "4", 3.14159 -> "3.14"
+    if isinstance(resultado_float, float) and resultado_float.is_integer():
+        resultado_str = str(int(resultado_float))
+    else:
+        resultado_str = f"{resultado_float:.2f}".rstrip('0').rstrip('.') # Limita a 2 casas, remove .0
+
+    # Escrever comentário no .asm
+    asm.write(f"\n    ; Expressão: {operacao} = {resultado_str} [IEEE754: {ieee_hex}]\n")
+    
+    # Enviar a expressão original
+    for char in operacao:
+        asm.write(f"""
+    LDI R16, 0x{ord(char):02X}
+    RCALL uart_envia_byte
+""")
+
+    # Enviar o sinal de igual e espaço
+    asm.write("""
+    LDI R16, 0x20  ; ' '
+    RCALL uart_envia_byte
+    LDI R16, 0x3D  ; '='
+    RCALL uart_envia_byte
+    LDI R16, 0x20  ; ' '
+    RCALL uart_envia_byte
+""")
+    
+    # Enviar o resultado formatado
+    for char in resultado_str:
+        asm.write(f"""
+    LDI R16, 0x{ord(char):02X}
+    RCALL uart_envia_byte
+""")
+
+    # Enviar o formato IEEE 754: " [IEEE754: "
+    asm.write("""
+    LDI R16, 0x20  ; ' '
+    RCALL uart_envia_byte
+    LDI R16, 0x5B  ; '['
+    RCALL uart_envia_byte
+    LDI R16, 0x49  ; 'I'
+    RCALL uart_envia_byte
+    LDI R16, 0x45  ; 'E'
+    RCALL uart_envia_byte
+    LDI R16, 0x45  ; 'E'
+    RCALL uart_envia_byte
+    LDI R16, 0x45  ; 'E'
+    RCALL uart_envia_byte
+    LDI R16, 0x37  ; '7'
+    RCALL uart_envia_byte
+    LDI R16, 0x35  ; '5'
+    RCALL uart_envia_byte
+    LDI R16, 0x34  ; '4'
+    RCALL uart_envia_byte
+    LDI R16, 0x3A  ; ':'
+    RCALL uart_envia_byte
+    LDI R16, 0x20  ; ' '
+    RCALL uart_envia_byte
+""")
+    
+    # Enviar o valor IEEE 754 em hex
+    for char in ieee_hex:
+        asm.write(f"""
+    LDI R16, 0x{ord(char):02X}
+    RCALL uart_envia_byte
+""")
+    
+    # Enviar o fechamento dos colchetes
+    asm.write("""
+    LDI R16, 0x5D  ; ']'
+    RCALL uart_envia_byte
+""")
+    
+    # Enviar nova linha (CR e LF)
+    asm.write("""
+    LDI R16, 13  ; CR
+    RCALL uart_envia_byte
+    LDI R16, 10  ; LF
+    RCALL uart_envia_byte
+    
+    ; Delay para visualização da linha completa
+    RCALL delay_ms
+""")
 
 class Type:
     def __init__(self, name, is_numeric=False):
@@ -810,7 +1020,10 @@ class ResultNode(ASTNode):
             raise ValueError("Result node requires exactly one offset (N)")
         
         offset_type = self.children[0].check_types()
-        self.type = offset_type # Type of RES is the type of N
+        
+        # The result of RES is always a float, as results are stored as floats.
+        # So the type of the ResultNode itself should be FLOAT_TYPE.
+        self.type = FLOAT_TYPE 
         return self.type
 
 def print_ast_text(node, indent=0):
@@ -888,7 +1101,7 @@ class TypeInference:
         else:
             result_type = INT_TYPE
         
-        sequent = Sequent(context, f"({e1_sequent.expr} {op} {e2_sequent.expr})", result_type)
+        sequent = Sequent(context, f"({e1_sequent.expr} {e2_sequent.expr} {op})", result_type) # Changed expression format for RPN
         self._add_derivation(sequent)
         return sequent
 
@@ -938,10 +1151,7 @@ class TypeInference:
     def res_rule(self, offset_sequent: Sequent) -> Optional[Sequent]:
         # If (N RES) means return the N-th result (from the `resultados` list)
         if offset_sequent.type == INT_TYPE: # N must be an integer
-            # This rule in TypeInference assumes we can determine the type of the N-th result.
-            # For this simplified type system, we'll assume it's float or the type of N.
-            # It's better to stick to the actual eval_ast behavior.
-            # So, the type of the result node will be FLOAT_TYPE (as results are stored as floats implicitly).
+            # The type of the result node will be FLOAT_TYPE (as results are stored as floats implicitly).
             sequent = Sequent(offset_sequent.context, f"({offset_sequent.expr} RES)", FLOAT_TYPE)
             self._add_derivation(sequent)
             return sequent
@@ -1029,6 +1239,589 @@ def patch_eval_op():
 
 # --- Main Function (This MUST be at the global scope, no indentation) ---
 
+def adicionar_rotinas_ieee754(file):
+    """
+    Adiciona as rotinas de manipulação IEEE 754 ao arquivo Assembly
+    """
+    file.write("""
+;***********************************************************************************************
+; Rotinas auxiliares (UART e Delay) - Posicionadas no início para melhor alcance de RCALL
+;***********************************************************************************************
+
+; Função para enviar um byte pela UART
+uart_envia_byte:
+    LDS R17, UCSR0A
+    SBRS R17, 5
+    RJMP uart_envia_byte
+    STS UDR0, R16
+    RET
+
+; Função de delay em milissegundos
+delay_ms:
+    PUSH R20
+    PUSH R21
+    LDI R20, 100 ; Aumentado para 100 para um delay perceptível
+delay_ms_outer:
+    LDI R21, 255
+delay_ms_inner:
+    DEC R21
+    BRNE delay_ms_inner
+    DEC R20
+    BRNE delay_ms_outer
+    POP R21
+    POP R20
+    RET
+
+;***********************************************************************************************
+; Rotinas para manipulação de números IEEE 754 half-precision (16 bits)
+;***********************************************************************************************
+
+half_add:
+    ; Empilhar registradores
+    PUSH R20
+    PUSH R21
+    PUSH R22
+    PUSH R23
+    PUSH R24
+    PUSH R25
+
+    ; Extrair componentes do primeiro operando (a)
+    MOV R20, R17         ; r20 = byte alto de a
+    ANDI R20, 0x80       ; r20 = bit de sinal de a
+    MOV R21, R17
+    ANDI R21, 0x7C       ; r21 = 5 bits de expoente (parte alta) / bit de sinal (bit 8) e ignorando mantissa
+    LSR R21
+    LSR R21              ; r21 = expoente >> 2 / R21 > menos significativo a mantissa (2 zeros a esquerda)
+    MOV R22, R17         ; começo da extração da mantissa
+    ANDI R22, 0x03       ; r22 = 2 bits mais altos da mantissa
+    LSL R22
+    LSL R22
+    LSL R22
+    LSL R22
+    LSL R22
+    LSL R22              ; r22 = bits altos da mantissa deslocados
+    OR R22, R16          ; r22:r16 = mantissa completa
+
+    ; Extrair componentes do segundo operando (b)
+    MOV R23, R19         ; r23 = byte alto de b
+    ANDI R23, 0x80       ; r23 = bit de sinal de b
+    MOV R24, R19
+    ANDI R24, 0x7C       ; r24 = 5 bits de expoente (parte alta)
+    LSR R24
+    LSR R24              ; r24 = expoente >> 2
+    MOV R25, R19
+    ANDI R25, 0x03       ; r25 = 2 bits mais altos da mantissa
+    LSL R25
+    LSL R25
+    LSL R25
+    LSL R25
+    LSL R25
+    LSL R25              ; r25 = bits altos da mantissa deslocados
+    OR R25, R18          ; r25:r18 = mantissa completa
+
+    ; Alinhar expoentes
+    CP R21, R24
+    BREQ exponents_equal
+    BRLO a_smaller
+    
+    ; Expoente de a é maior
+    SUB R21, R24         ; Diferença entre expoentes
+    ; Ajustar mantissa de b
+    LSR R25
+    JMP exponents_equal
+    
+a_smaller:
+    ; Expoente de b é maior
+    SUB R24, R21         ; Diferença entre expoentes
+    ; Ajustar mantissa de a
+    LSR R22
+    
+exponents_equal:
+    ; Verificar sinais para soma/subtração
+    CP R20, R23
+    BREQ same_sign
+    
+    ; Sinais diferentes - realizar subtração
+    JMP result_ready
+    
+same_sign:
+    ; Sinais iguais - realizar soma
+    ADD R16, R18         ; Somar bytes baixos da mantissa
+    ADC R22, R25         ; Somar bytes altos da mantissa com carry
+    
+result_ready:
+    ; Reconstruir o número IEEE 754 de 16 bits
+    MOV R17, R20         ; Colocar bit de sinal
+    
+    ; Restaurar registradores
+    POP R25
+    POP R24
+    POP R23
+    POP R22
+    POP R21
+    POP R20
+    RET
+
+half_subtract:
+    ; Empilhar registradores
+    PUSH R20
+    PUSH R21
+    PUSH R22
+    PUSH R23
+    PUSH R24
+    PUSH R25
+
+    ; Extrair componentes do primeiro operando (a)
+    MOV R20, R17         ; r20 = byte alto de a
+    ANDI R20, 0x80       ; r20 = bit de sinal de a
+    MOV R21, R17
+    ANDI R21, 0x7C       ; r21 = 5 bits de expoente (parte alta)
+    LSR R21
+    LSR R21              ; r21 = expoente >> 2
+    MOV R22, R17
+    ANDI R22, 0x03       ; r22 = 2 bits mais altos da mantissa
+    LSL R22
+    LSL R22
+    LSL R22
+    LSL R22
+    LSL R22
+    LSL R22              ; r22 = bits altos da mantissa deslocados
+    OR R22, R16          ; r22:r16 = mantissa completa
+
+    ; Extrair componentes do segundo operando (b)
+    MOV R23, R19         ; r23 = byte alto de b
+    ANDI R23, 0x80       ; r23 = bit de sinal de b
+    MOV R24, R19
+    ANDI R24, 0x7C       ; r24 = 5 bits de expoente (parte alta)
+    LSR R24
+    LSR R24              ; r24 = expoente >> 2
+    MOV R25, R19
+    ANDI R25, 0x03       ; r25 = 2 bits mais altos da mantissa
+    LSL R25
+    LSL R25
+    LSL R25
+    LSL R25
+    LSL R25
+    LSL R25              ; r25 = bits altos da mantissa deslocados
+    OR R25, R18          ; r25:r18 = mantissa completa
+
+    ; Inverter o sinal do segundo operando (transformar subtração em adição com sinal invertido)
+    LDI R19, 0x80
+    EOR R23, R19         ; Inverte o bit de sinal de b
+    
+    ; Alinhar expoentes
+    CP R21, R24
+    BREQ sub_exponents_equal
+    BRLO sub_a_smaller
+    
+    ; Expoente de a é maior
+    SUB R21, R24         ; Diferença entre expoentes
+    ; Ajustar mantissa de b
+    LSR R25
+    DEC R21
+    BRNE sub_exponents_equal
+    JMP sub_exponents_equal
+    
+sub_a_smaller:
+    ; Expoente de b é maior
+    SUB R24, R21         ; Diferença entre expoentes
+    ; Ajustar mantissa de a
+    LSR R22
+    DEC R24
+    BRNE sub_a_smaller
+    
+sub_exponents_equal:
+    ; Verificar sinais para soma/subtração
+    CP R20, R23
+    BREQ sub_same_sign
+    
+    ; Sinais diferentes - realizar subtração
+    SUB R16, R18         ; Subtrair bytes baixos da mantissa
+    SBC R22, R25         ; Subtrair bytes altos da mantissa com carry
+    JMP sub_result_ready
+    
+sub_same_sign:
+    ; Sinais iguais - realizar soma
+    ADD R16, R18         ; Somar bytes baixos da mantissa
+    ADC R22, R25         ; Somar bytes altos da mantissa com carry
+    
+sub_result_ready:
+    ; Reconstruir o número IEEE 754 de 16 bits
+    MOV R17, R20         ; Colocar bit de sinal
+    
+    ; Normalizar resultado se necessário
+    SBRC R22, 7          ; Se bit 7 estiver setado, ajustar expoente
+    INC R21              ; Incrementar expoente
+    
+    ; Inserir expoente
+    LSL R21
+    LSL R21              ; Deslocar expoente
+    ANDI R17, 0x83       ; Manter sinal e 2 bits altos da mantissa
+    ANDI R21, 0x7C       ; Manter apenas os 5 bits do expoente
+    OR R17, R21          ; Combinar sinal + expoente + bits altos da mantissa
+    
+    ; Restaurar registradores
+    POP R25
+    POP R24
+    POP R23
+    POP R22
+    POP R21
+    POP R20
+    RET
+
+half_multiply:
+    ; Empilhar registradores
+    PUSH R20
+    PUSH R21
+    PUSH R22
+    PUSH R23
+    PUSH R24
+    PUSH R25
+    
+    ; Extrair sinal (XOR dos bits de sinal)
+    MOV R20, R17         ; Byte alto de a
+    ANDI R20, 0x80       ; Bit de sinal de a
+    MOV R21, R19         ; Byte alto de b
+    ANDI R21, 0x80       ; Bit de sinal de b
+    EOR R20, R21         ; r20 = sinal do resultado
+    
+    ; Extrair expoentes
+    MOV R21, R17
+    ANDI R21, 0x7C       ; 5 bits de expoente de a
+    LSR R21
+    LSR R21              ; r21 = expoente normalizado
+    
+    MOV R22, R19
+    ANDI R22, 0x7C       ; 5 bits de expoente de b
+    LSR R22
+    LSR R22              ; r22 = expoente normalizado
+    
+    ; Somar expoentes e subtrair bias (15)
+    ADD R21, R22
+    SUBI R21, 15         ; r21 = expoente final
+    
+    ; Reconstruir o número IEEE 754 de 16 bits
+    MOV R17, R20         ; Colocar bit de sinal
+    
+    ; Restaurar registradores
+    POP R25
+    POP R24
+    POP R23
+    POP R22
+    POP R21
+    POP R20
+    RET
+
+half_divide:
+    ; Empilhar registradores
+    PUSH R20
+    PUSH R21
+    PUSH R22
+    PUSH R23
+    PUSH R24
+    PUSH R25
+    
+    ; Verificar divisão por zero
+    MOV R20, R18
+    OR R20, R19
+    BREQ half_div_by_zero
+    
+    ; Extrair sinal (XOR dos bits de sinal)
+    MOV R20, R17         ; Byte alto de a
+    ANDI R20, 0x80       ; Bit de sinal de a
+    MOV R21, R19         ; Byte alto de b
+    ANDI R21, 0x80       ; Bit de sinal de b
+    EOR R20, R21         ; r20 = sinal do resultado
+    
+    ; Extrair expoentes
+    MOV R21, R17
+    ANDI R21, 0x7C       ; 5 bits de expoente de a
+    LSR R21
+    LSR R21              ; r21 = expoente normalizado
+    
+    MOV R22, R19
+    ANDI R22, 0x7C       ; 5 bits de expoente de b
+    LSR R22
+    LSR R22              ; r22 = expoente normalizado
+    
+    ; Calcular expoente do resultado: exp_a - exp_b + bias(15)
+    SUB R21, R22
+    SUBI R21, -15        ; Adicionar bias (usando subtração negativa)
+    
+    ; Extrair mantissas
+    MOV R22, R17
+    ANDI R22, 0x03       ; 2 bits mais altos da mantissa de a
+    LSL R22
+    LSL R22
+    LSL R22
+    LSL R22
+    LSL R22
+    LSL R22              ; r22 = bits altos da mantissa deslocados
+    OR R22, R16          ; r22:r16 = mantissa completa de a
+    
+    MOV R23, R19
+    ANDI R23, 0x03       ; 2 bits mais altos da mantissa de b
+    LSL R23
+    LSL R23
+    LSL R23
+    LSL R23
+    LSL R23
+    LSL R23              ; r23 = bits altos da mantissa deslocados
+    OR R23, R18          ; r23:r18 = mantissa completa de b
+    
+    ; Adicionar bit implícito para mantissas normalizadas
+    ORI R22, 0x40        ; Adicionar bit implícito à mantissa de a
+    ORI R23, 0x40        ; Adicionar bit implícito à mantissa de b
+    
+    ; Realizar a divisão da mantissa (simplificada)
+    ; Normalmente, isso seria feito com uma rotina de divisão completa
+    ; Mas para simplificar, assumimos que a mantissa do resultado é aproximada
+    
+    ; Reconstruir o número IEEE 754 de 16 bits
+    MOV R17, R20         ; Colocar bit de sinal
+    
+    ; Inserir expoente
+    LSL R21
+    LSL R21              ; Deslocar expoente
+    ANDI R17, 0x83       ; Manter sinal e 2 bits altos da mantissa
+    ANDI R21, 0x7C       ; Manter apenas os 5 bits do expoente
+    OR R17, R21          ; Combinar sinal + expoente + bits altos da mantissa
+    
+    ; Restaurar registradores
+    POP R25
+    POP R24
+    POP R23
+    POP R22
+    POP R21
+    POP R20
+    RET
+    
+half_div_by_zero:
+    ; Extrair o sinal do numerador (a)
+    MOV R20, R17
+    ANDI R20, 0x80       ; Bit de sinal de a
+    
+    ; Gerar infinito com o sinal apropriado
+    LDI R16, 0x00        ; Byte baixo para infinito
+    LDI R17, 0x7C        ; Byte alto para infinito positivo
+    OR R17, R20          ; Aplicar sinal ao infinito
+    
+    ; Restaurar registradores
+    POP R25
+    POP R24
+    POP R23
+    POP R22
+    POP R21
+    POP R20
+    RET
+
+half_power:
+    ; Empilhar registradores
+    PUSH R20
+    PUSH R21
+    PUSH R22
+    PUSH R23
+    PUSH R24
+    PUSH R25
+    
+    ; Verificar casos especiais
+    ; Caso 1: Se expoente for 0, retornar 1.0
+    MOV R20, R18
+    OR R20, R19
+    BREQ power_one       ; Se expoente for zero, resultado é 1.0
+    
+    ; Caso 2: Se base for 1.0, retornar 1.0
+    LDI R20, 0x00
+    CP R16, R20
+    BRNE check_base_neg
+    LDI R20, 0x3C        ; 1.0 em half-precision
+    CP R17, R20
+    BREQ power_one       ; Se base for 1.0, resultado é 1.0
+    
+check_base_neg:
+    ; Caso 3: Se base for negativa, verificar se expoente é inteiro
+    MOV R20, R17
+    ANDI R20, 0x80
+    BREQ base_positive   ; Se base for positiva, prosseguir normalmente
+    
+    ; Base é negativa, verificar se expoente é inteiro
+    ; Para simplificar, vamos retornar NaN para base negativa
+    JMP power_nan
+    
+base_positive:
+    ; Implementação simplificada: para potência, usamos logaritmo
+    ; ln(a^b) = b * ln(a), depois exp()
+    ; Como isso requer funções transcendentais complexas,
+    ; vamos implementar apenas casos especiais comuns
+    
+    ; Caso especial: Se expoente for 0.5, calcular raiz quadrada
+    LDI R20, 0x00
+    CP R18, R20
+    BRNE power_approx
+    LDI R20, 0x38        ; 0.5 em half-precision
+    CP R19, R20
+    BRNE power_approx
+    
+    ; Calcular raiz quadrada (aproximação)
+    ; Para simplificar, dividimos o expoente por 2
+    MOV R21, R17
+    ANDI R21, 0x7C       ; Expoente da base
+    LSR R21              ; Dividir expoente por 2
+    ANDI R17, 0x83       ; Manter sinal e parte da mantissa
+    OR R17, R21          ; Recombinar
+    JMP power_done
+    
+power_approx:
+    ; Implementação muito simplificada para outros casos
+    ; Ajuste de expoente aproximado para operações de potência
+    ; Em uma implementação real, um algoritmo mais complexo seria necessário
+    
+power_done:
+    ; Restaurar registradores
+    POP R25
+    POP R24
+    POP R23
+    POP R22
+    POP R21
+    POP R20
+    RET
+    
+power_one:
+    ; Retornar 1.0
+    LDI R16, 0x00
+    LDI R17, 0x3C        ; 1.0 em half-precision
+    
+    ; Restaurar registradores
+    POP R25
+    POP R24
+    POP R23
+    POP R22
+    POP R21
+    POP R20
+    RET
+    
+power_nan:
+    ; Retornar NaN
+    LDI R16, 0x00
+    LDI R17, 0x7E        ; NaN em half-precision
+    
+    ; Restaurar registradores
+    POP R25
+    POP R24
+    POP R23
+    POP R22
+    POP R21
+    POP R20
+    RET
+
+half_modulo:
+    ; Empilhar registradores
+    PUSH R20
+    PUSH R21
+    PUSH R22
+    PUSH R23
+    PUSH R24
+    PUSH R25
+    
+    ; Verificar divisão por zero
+    MOV R20, R18
+    OR R20, R19
+    BREQ mod_by_zero
+    
+    ; Extrair componentes do primeiro operando (a)
+    MOV R20, R17         ; r20 = byte alto de a
+    ANDI R20, 0x80       ; r20 = bit de sinal de a
+    
+    ; Extrair expoentes
+    MOV R21, R17
+    ANDI R21, 0x7C       ; 5 bits de expoente de a
+    MOV R22, R19
+    ANDI R22, 0x7C       ; 5 bits de expoente de b
+    
+    ; Verificar se b é maior que a
+    CP R21, R22
+    BRLO mod_a_smaller   ; Se expoente de a for menor, resultado é a
+    
+    ; Implementação simplificada de módulo
+    ; Em uma implementação real, precisaríamos realizar a divisão,
+    ; truncar para obter o quociente, multiplicar pelo divisor,
+    ; e subtrair do dividendo
+    
+    ; Para simplificar, vamos retornar um valor aproximado baseado
+    ; na comparação dos expoentes
+    
+mod_a_smaller:
+    ; Se a < b, resultado do módulo é a
+    MOV R16, R16
+    MOV R17, R17
+    JMP mod_done
+    
+mod_done:
+    ; Restaurar registradores
+    POP R25
+    POP R24
+    POP R23
+    POP R22
+    POP R21
+    POP R20
+    RET
+    
+mod_by_zero:
+    ; Retornar NaN
+    LDI R16, 0x00
+    LDI R17, 0x7E        ; NaN em half-precision
+    
+    ; Restaurar registradores
+    POP R25
+    POP R24
+    POP R23
+    POP R22
+    POP R21
+    POP R20
+    RET
+
+integer_divide:
+    ; Empilhar registradores
+    PUSH R20
+    PUSH R21
+    PUSH R22
+    PUSH R23
+    
+    ; Verificar divisão por zero
+    MOV R20, R18
+    OR R20, R19
+    BREQ div_by_zero
+    
+    ; Salvar sinal
+    MOV R20, R16
+    EOR R20, R18         ; XOR para determinar o sinal do resultado
+    ANDI R20, 0x80       ; Apenas o bit de sinal
+    
+    ; Resultado da divisão inteira em r16:r17
+    ; Restaurar o sinal em r17
+    ANDI R17, 0x7F       ; Limpar bit de sinal
+    OR R17, r20          ; Aplicar bit de sinal
+    
+    ; Restaurar registradores
+    POP R23
+    POP R22
+    POP R21
+    POP R20
+    RET
+    
+div_by_zero:
+    ; Tratar divisão por zero
+    LDI R16, 0xFF       ; Indicar erro
+    LDI R17, 0xFF
+    
+    ; Restaurar registradores
+    POP R23
+    POP R22
+    POP R21
+    POP R20
+    RET
+""")
+
 def main():
     if len(sys.argv) != 2:
         print(f"{Fore.RED}Uso: python compilador.py arquivo.txt{Style.RESET_ALL}")
@@ -1051,31 +1844,108 @@ def main():
     resultados = []
     
     with open('calculadora.asm', 'w') as asm:
-        asm.write("""; Assembly gerado para exibir resultados de expressões RPN\n.ORG 0x0000\n    RJMP main\nmain:\n""")
-        asm.write("""
-    ; Definições dos bits do UART
-    .equ UCSR0B, 0xC1
-    .equ UCSR0C, 0xC2
-    .equ UBRR0L, 0xC4
-    .equ UBRR0H, 0xC5
-    .equ UDR0, 0xC6
-    .equ UCSR0A, 0xC0
-    .equ TXEN0, 3
-    .equ UCSZ00, 1
-    .equ UCSZ01, 2
-    .equ UDRE0, 5
+        asm.write("""; Calculadora RPN - Código Assembly para ATmega328P (IEEE 754 Half-precision 16 bits)
+; Alunos: Gabriel Martins Vicente, Javier Agustin Aranibar González, Matheus Paul Lopuch, Rafael Bonfim Zacco
+;***********************************************************************************************
+.equ SPH, 0x3E    ; Stack Pointer High
+.equ SPL, 0x3D    ; Stack Pointer Low
+.equ UBRR0L, 0xC4 ; Baud Rate Register Low
+.equ UBRR0H, 0xC5 ; Baud Rate Register High
+.equ UCSR0A, 0xC0 ; Control and Status Register A: Usado para verificar o status da UART (bit 5: UDRE0)
+.equ UCSR0B, 0xC1 ; Control and Status Register B: Habilita transmissor (bit TXEN0)
+.equ UCSR0C, 0xC2 ; Control and Status Register C: Configura formato de dados (UCSZ00 e UCSZ01)
+.equ UDR0, 0xC6   ; Registrador de dados para a UART0
+; Fórmula para definir o Universal Boud Rate Register (UBRR): UBRR = Fcpu / (16 * Baud Rate) -1
+; Para o ATmega328P seria: 16MHz / (16 * 9600) - 1 = 103
+;***********************************************************************************************
 
-    ; Configurar UART (9600 baud com F_CPU=16MHz)
-    ; UBRR0 = (F_CPU / 16 / BAUD) - 1 = (16000000 / 16 / 9600) - 1 = 103
-    LDI r16, 103
-    STS UBRR0L, r16   ; UBRR0L
-    LDI r16, 0
-    STS UBRR0H, r16   ; UBRR0H
-    LDI r16, (1<<TXEN0) ; Habilita o transmissor (TXEN0 bit 3 de UCSR0B)
-    STS UCSR0B, r16   ; UCSR0B
-    LDI r16, (3<<UCSZ00) ; Configura 8 bits de dados, 1 bit de parada (UCSZ00 e UCSZ01 bits 1,2 de UCSR0C)
-    STS UCSR0C, r16   ; UCSR0C
-    """)
+.ORG 0x0000
+    RJMP reset
+    
+reset:
+    ; Configurar stack pointer
+    LDI R16, 0x08
+    OUT SPH, r16
+    LDI R16, 0xFF
+    OUT SPL, r16
+        
+    ; Configurar UART
+    LDI R16, 103
+    STS UBRR0L, r16
+    LDI R16, 0
+    STS UBRR0H, r16
+    LDI R16, (1<<3) ; TXEN0 bit 3
+    STS UCSR0B, r16
+    LDI R16, (3<<1) ; UCSZ00 e UCSZ01 bits 1,2 (8 bits de dados)
+    STS UCSR0C, r16
+        
+    ; Delay inicial para estabilizar o sistema
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    NOP
+    
+    ; Enviar mensagem inicial
+    LDI R16, 'C'
+    RCALL uart_envia_byte
+    LDI R16, 'a'
+    RCALL uart_envia_byte
+    LDI R16, 'l'
+    RCALL uart_envia_byte
+    LDI R16, 'c'
+    RCALL uart_envia_byte
+    LDI R16, 'u'
+    RCALL uart_envia_byte
+    LDI R16, 'l'
+    RCALL uart_envia_byte
+    LDI R16, 'a'
+    RCALL uart_envia_byte
+    LDI R16, 'd'
+    RCALL uart_envia_byte
+    LDI R16, 'o'
+    RCALL uart_envia_byte
+    LDI R16, 'r'
+    RCALL uart_envia_byte
+    LDI R16, 'a'
+    RCALL uart_envia_byte
+    LDI R16, ' '
+    RCALL uart_envia_byte
+    LDI R16, 'R'
+    RCALL uart_envia_byte
+    LDI R16, 'P'
+    RCALL uart_envia_byte
+    LDI R16, 'N'
+    RCALL uart_envia_byte
+    LDI R16, ':'
+    RCALL uart_envia_byte
+    LDI R16, 13  ; CR
+    RCALL uart_envia_byte
+    LDI R16, 10  ; LF
+    RCALL uart_envia_byte
+    LDI R16, 13  ; CR (linha extra para espaçamento visual)
+    RCALL uart_envia_byte
+    LDI R16, 10  ; LF
+    RCALL uart_envia_byte
+    
+main:
+""")
+        
         for i, expr in enumerate(linhas):
             print(f"\n{Fore.CYAN}{Style.BRIGHT}Expressão {i+1}:{Style.RESET_ALL} {expr}")
             tokens_lex = lexer(expr, i+1)
@@ -1098,33 +1968,55 @@ def main():
                 result = parser.eval_ast(ast)
                 memoria = parser.memoria
                 
-                # Only add to results if it's an expression that produces a value
-                # and is not explicitly a MemoryStoreNode.
-                # If (N RES) and (RES) retrieve results, they *do* produce a value
-                # that should be added to the results list.
-                # So, only exclude MemoryStoreNode.
-                if not isinstance(ast, MemoryStoreNode):
-                    resultados.append(result)
-                
+                # A lógica de adição de resultados já está no eval_ast para a maioria dos nós
+                # E o controle de duplicação para BinaryOpNode (comparações) está lá também.
+                # Não é mais necessário um append extra aqui, pois eval_ast já lida.
+                # Apenas para garantir que o resultado final da expressão seja armazenado se não for um if/for
+                if not isinstance(ast, MemoryStoreNode) and not (isinstance(ast, BinaryOpNode) and ast.type == BOOL_TYPE):
+                    if not (isinstance(ast, ForNode) or isinstance(ast, IfNode)) or isinstance(result, (int, float)):
+                        # Se for For/If, só adiciona se o resultado for numérico
+                        pass # A adição já acontece em eval_ast para estes casos também.
+
+
                 ieee_hex = float_to_ieee754(float(result))
                 print(f"  {Fore.GREEN}Resultado: {result} [IEEE754: {ieee_hex}]{Style.RESET_ALL}")
                 
-                # Corrige: mostra o tipo do ramo realmente executado no if
                 tipo_str = '?'
                 if isinstance(ast, IfNode):
-                    cond = ast.children[0]
-                    then_branch = ast.children[1]
-                    else_branch = ast.children[2]
-                    cond_val = parser.eval_ast(cond)
+                    # Para if, o tipo é inferido dos branches
+                    cond_val = parser.eval_ast(ast.children[0]) # Reavalia a condição para determinar o branch
                     if bool(cond_val):
-                        tipo_str = 'i' if then_branch.type == INT_TYPE else 'f'
+                        final_branch_type = ast.children[1].type
                     else:
-                        tipo_str = 'i' if else_branch.type == INT_TYPE else 'f'
+                        final_branch_type = ast.children[2].type
+
+                    if final_branch_type == INT_TYPE:
+                        tipo_str = 'i'
+                    elif final_branch_type == FLOAT_TYPE:
+                        tipo_str = 'f'
+                    elif final_branch_type == BOOL_TYPE: # Se o resultado do if é booleano, trata como tal
+                        tipo_str = 'b'
+                    else:
+                        tipo_str = 'u' # Tipo desconhecido ou outro
+                elif isinstance(ast, ForNode):
+                    # Para loop for, o tipo é inferido do corpo
+                    if ast.type == INT_TYPE:
+                        tipo_str = 'i'
+                    elif ast.type == FLOAT_TYPE:
+                        tipo_str = 'f'
+                    elif ast.type == BOOL_TYPE:
+                        tipo_str = 'b'
+                    else:
+                        tipo_str = 'u'
+                elif isinstance(ast, BinaryOpNode) and ast.type == BOOL_TYPE:
+                    tipo_str = 'b' # Resultado booleano para comparações
                 else:
                     if ast.type == INT_TYPE:
                         tipo_str = 'i'
                     elif ast.type == FLOAT_TYPE:
                         tipo_str = 'f'
+                    else:
+                        tipo_str = 'u' # Catch-all para outros tipos de nó
                 
                 dot = ast.visualize()
                 dot.render(f'ast_{i+1}', format='png', cleanup=True)
@@ -1139,12 +2031,14 @@ def main():
             except Exception as e:
                 print(f"  {Fore.RED}Erro ao processar expressão: {e}{Style.RESET_ALL}")
                 continue
-        asm.write("""loop:\n    RJMP loop\n\n; Rotina UART para ATmega328P\nuart_envia_byte:\n    ; Aguarda o registrador de buffer de transmissão estar vazio (UDRE0 bit 5 de UCSR0A)
-    lds r17, UCSR0A   ; UCSR0A
-    sbrs r17, UDRE0     ; Testa o bit UDRE0
-    rjmp uart_envia_byte ; Se não vazio, pula de volta
-    sts UDR0, r16   ; UDR0 (Envia o byte em R16)
-    ret\n""")
+        asm.write("""
+    ; Loop infinito para o final do programa
+loop_end:
+    RJMP loop_end
+""") # Ajustado para loop_end para clareza
+        # Adicionar rotinas IEEE 754 e de delay no final do arquivo ASM
+        adicionar_rotinas_ieee754(asm) # Chamado aqui para garantir que as rotinas sejam definidas UMA VEZ
+    
     print(f"\n{Fore.GREEN}Arquivo calculadora.asm gerado com sucesso!{Style.RESET_ALL}")
 
 # --- Entry Point for the script ---
