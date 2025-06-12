@@ -1,3 +1,15 @@
+"""
+
+Phase 4 Project - Group 04
+
+Students: 
+- Gabriel Martins Vicente
+- Javier Agustin Aranibar González  
+- Matheus Paul Lopuch
+- Rafael Bonfim Zacco
+
+"""
+
 import sys
 import re
 import math
@@ -115,9 +127,12 @@ def power_half_precision(a, b):
     """
     fa, fb = half_ieee754_to_float(a), half_ieee754_to_float(b)
     try:
+        # Se o expoente for 0 e a base não for 0, retorna 1.0
+        if fb == 0.0 and fa != 0.0:
+            return float_to_half_ieee754(1.0)
         return float_to_half_ieee754(fa ** fb)
     except:
-        return 0x7E00
+        return 0x7E00  # NaN para casos de erro
 
 def mod_half_precision(a, b):
     """
@@ -530,7 +545,9 @@ class Parser:
                      raise ValueError("Expoente para '^' deve ser inteiro")
                 if a == 0 and b == 0:
                     return 1.0
-                if a == 0 or b == 0:
+                if b == 0:
+                    return 1.0
+                if a == 0:
                     return 0.0
                 if a < 0 and b < 0:
                     return (-(-a) ** b)
@@ -888,11 +905,14 @@ class IdentifierNode(ASTNode):
         super().__init__(name)
         self.type = None
 
-    def check_types(self):
+    def check_types(self, parser=None):
         if self.type is None:
             self.type = INT_TYPE
         if not isinstance(self.type, Type):
             raise ValueError(f"Invalid type object for identifier '{self.value}': {self.type}")
+        # Verifica se a variável está declarada durante a análise de tipos
+        if parser and self.value not in parser.vars:
+            raise ValueError(f"Variável '{self.value}' não declarada")
         return self.type
 
 class BinaryOpNode(ASTNode):
@@ -1012,6 +1032,8 @@ class MemoryRetrieveNode(ASTNode):
 class ResultNode(ASTNode):
     def __init__(self, offset_node: NumberNode):
         super().__init__('RES')
+        if not isinstance(offset_node, NumberNode):
+            raise ValueError("O offset para RES deve ser um número")
         self.add_child(offset_node)
         self.type = None
 
@@ -1020,11 +1042,22 @@ class ResultNode(ASTNode):
             raise ValueError("Result node requires exactly one offset (N)")
         
         offset_type = self.children[0].check_types()
-        
-        # The result of RES is always a float, as results are stored as floats.
-        # So the type of the ResultNode itself should be FLOAT_TYPE.
-        self.type = FLOAT_TYPE 
+        if offset_type != INT_TYPE:
+            raise ValueError("Offset for RES must be an integer")
+        self.type = FLOAT_TYPE  # RES sempre retorna float
         return self.type
+
+    def eval_ast(self, parser):
+        n = int(self.children[0].value)
+        if n < 0:
+            raise ValueError(f"Índice RES({n}) deve ser não negativo")
+        if n >= len(parser.resultados):
+            raise ValueError(f"Índice RES({n}) fora dos limites. Resultados disponíveis: {len(parser.resultados)}")
+        # Ajusta o índice para acessar o N-ésimo resultado anterior
+        # n=0 retorna o último resultado, n=1 retorna o penúltimo, etc.
+        result = parser.resultados[-(n+1)]
+        parser.resultados.append(result)
+        return result
 
 def print_ast_text(node, indent=0):
     prefix = "  " * indent
@@ -1224,20 +1257,13 @@ def print_type_derivation(node: ASTNode):
 # --- Utility Functions (These MUST be at the global scope, not inside main or any class) ---
 
 def ast_to_dict(node):
-    """Converts an AST node to a dictionary (for JSON serialization)."""
-    return {
-        'type': node.__class__.__name__,
-        'value': node.value,
-        'node_type': str(node.type) if node.type else None, # Add inferred type to JSON
-        'children': [ast_to_dict(child) for child in getattr(node, 'children', [])]
-    }
-
-# This is a placeholder/legacy function. 
-# The eval_op method is now directly part of the Parser class.
-def patch_eval_op():
-    pass
-
-# --- Main Function (This MUST be at the global scope, no indentation) ---
+    if isinstance(node, ASTNode):
+        return {
+            'type': node.__class__.__name__,
+            'value': node.value,
+            'children': [ast_to_dict(child) for child in node.children]
+        }
+    return node
 
 def adicionar_rotinas_ieee754(file):
     """
