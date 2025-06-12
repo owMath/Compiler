@@ -1,0 +1,12 @@
+; Arquivo de teste para erros léxicos e sintáticos
+
+(1.2.3 + 4)       ; Erro Léxico: Número com múltiplos pontos decimais
+"string aberta    ; Erro Léxico: String não fechada (sem aspas finais)
+(1 + @)           ; Erro Léxico: Caractere desconhecido
+(1.e + 2)         ; Erro Léxico: Notação científica inválida (sem dígito após 'e')
+(1.2e+A)          ; Erro Léxico: Notação científica inválida (caractere não numérico após sinal)
+(if 1 then 2)     ; Erro Sintático: 'if' incompleto (falta 'else')
+(for x in 1 to)   ; Erro Sintático: 'for' incompleto (falta expressão 'to')
+(10 + 20)         ; Erro Sintático: Ordem inválida (operando extra antes do operador)
+(MEM + 5)         ; Erro Sintático/Semântico: MEM não pode ser um operando de binário, nem seguido de operador
+((10))            ; Erro Sintático: Parênteses aninhados excessivos/token inesperado após o primeiro operando
