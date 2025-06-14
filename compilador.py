@@ -239,18 +239,6 @@ class ParsingTable:
         
         self.table['NUM']['número'] = ['INT']
     
-    def get_production(self, non_terminal, terminal_type_or_value):
-        if terminal_type_or_value == 'número':
-            return self.table.get(non_terminal, {}).get('número')
-        elif terminal_type_or_value == 'identificador':
-            return self.table.get(non_terminal, {}).get('identificador')
-        elif terminal_type_or_value in KEYWORDS:
-            return self.table.get(non_terminal, {}).get(terminal_type_or_value)
-        elif terminal_type_or_value in OPERATORS:
-            return self.table.get(non_terminal, {}).get(terminal_type_or_value) # Changed 'operador' to terminal_type_or_value
-        
-        return self.table.get(non_terminal, {}).get(terminal_type_or_value)
-    
     def print_table(self):
         print(f"\n{Fore.CYAN}{Style.BRIGHT}Tabela de Parsing LL(1):{Style.RESET_ALL}")
         
