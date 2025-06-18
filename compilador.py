@@ -42,7 +42,7 @@ KEYWORDS = {'RES', 'MEM', 'if', 'then', 'else', 'for', 'in', 'to', 'do'}
 
 Token = namedtuple('Token', ['value', 'type', 'line', 'col'])
 
-
+# FIRST indica os símbolos iniciais possíveis de uma produção
 class FirstSet:
     def __init__(self):
         self.sets = {
@@ -55,7 +55,8 @@ class FirstSet:
     
     def get(self, non_terminal):
         return self.sets.get(non_terminal, set())
-
+    
+# FOLLOW os símbolos válidos que podem seguir um não-terminal
 class FollowSet:
     def __init__(self):
         self.sets = {
@@ -69,6 +70,7 @@ class FollowSet:
     def get(self, non_terminal):
         return self.sets.get(non_terminal, set())
 
+# Guiar o parser na escolha das produções corretas com base no token atua
 class ParsingTable:
     def __init__(self):
         self.first_sets = FirstSet()
@@ -76,6 +78,7 @@ class ParsingTable:
         self.table = {}
         self.initialize_table()
     
+    # Define uma lista de não-terminais da gramática e Coleta todos os terminais possíveis a partir dos conjuntos FIRST e FOLLOW
     def initialize_table(self):
         non_terminals = ['S', 'EXPR', 'OPERAND', 'OPERATOR', 'NUM']
         terminals = set()
@@ -100,6 +103,7 @@ class ParsingTable:
         
         self.fill_table()
     
+    # Uma função auxiliar que mapeia os tipos de token do lexer para os terminais usados na gramática
     def fill_table(self):
         def map_terminal(token_type_or_value):
             if token_type_or_value == 'INT' or token_type_or_value == 'REAL':
@@ -164,6 +168,8 @@ class ParsingTable:
         print(tabulate(table_data, headers=headers, tablefmt='grid'))
         print()
 
+# A função float_to_ieee754(f) converte um número de ponto flutuante Python para sua 
+# representação hexadecimal no formato IEEE 754, com precisão variável (half, single, double).
 def float_to_ieee754(f):
     f = float(f) 
     if PRECISAO == 'half':
@@ -204,6 +210,8 @@ def float_to_ieee754(f):
     else:
         return hex(int(f)) 
 
+# Inicializa tokens (lista de tokens resultantes), i (índice de leitura na linha) e estado (estado atual do autômato finito).
+# Usa um loop while para iterar sobre a linha, caractere por caractere. 
 def lexer(line, line_num=1):
     tokens = []
     i = 0
@@ -266,6 +274,8 @@ def lexer(line, line_num=1):
             estado = 'INICIO'
     return tokens
 
+# Allow casting = true >  permite converter int para float em tempo de execução ou inferência, garantindo que expressões misturadas funcionem corretamente
+# Classe Parser responsável pela análise sintática (parsing) e avaliação da Árvore Sintática Abstrata (AST)
 class Parser:
     def __init__(self, tokens, memoria, resultados):
         self.tokens = tokens
@@ -470,6 +480,8 @@ class Parser:
             print(f"{Fore.RED}Erro na operação '{op}': {str(e)}{Style.RESET_ALL}")
             raise
 
+# parse() decide o tipo de token (número, MEM, RES etc.), e delega à função parse_paren() quando a expressão inicia com (
+# Inicia o processo de parsing da lista de tokens e constrói a AST
     def parse(self):
         t = self.at()
         if t is None:
@@ -700,6 +712,7 @@ def escrever_serial(asm, operacao, resultado, ieee_hex, tipo_str):
     RCALL delay_ms
 """)
 
+# Class Type representa os tipos de dados na linguagem do compilador
 class Type:
     def __init__(self, name, is_numeric=False):
         self.name = name
@@ -727,6 +740,9 @@ STRING_TYPE = Type('string', False)
 BOOL_TYPE = Type('bool', False)
 VOID_TYPE = Type('void', False)
 
+# Class ASTNODE é a classe base para todos os nós da Árvore Sintática Abstrata (AST). 
+# Ela define a estrutura comum e métodos para manipulação e visualização da AST.
+# Cada nó corresponde a uma operação, valor ou comando, e serve como base para a execução e inferência de tipos
 class ASTNode:
     def __init__(self, value=None):
         self.value = value
@@ -776,7 +792,7 @@ class ASTNode:
         
         return dot
 
-class NumberNode(ASTNode):
+class NumberNode(ASTNode): # Retorna valor numérico
     def __init__(self, value):
         super().__init__(value)
         if isinstance(value, int):
@@ -789,7 +805,7 @@ class NumberNode(ASTNode):
     def check_types(self):
         return self.type
 
-class IdentifierNode(ASTNode):
+class IdentifierNode(ASTNode): # Retorna o valor da variável
     def __init__(self, name):
         super().__init__(name)
         self.type = None
@@ -804,7 +820,7 @@ class IdentifierNode(ASTNode):
             raise ValueError(f"Variável '{self.value}' não declarada")
         return self.type
 
-class BinaryOpNode(ASTNode):
+class BinaryOpNode(ASTNode): # Representa uma operação binária
     def __init__(self, op):
         super().__init__(op)
         self.type = None
@@ -836,7 +852,7 @@ class BinaryOpNode(ASTNode):
             self.type = INT_TYPE
         return self.type
 
-class IfNode(ASTNode):
+class IfNode(ASTNode): # Representa o if
     def __init__(self):
         super().__init__('if')
         self.type = None
@@ -861,7 +877,7 @@ class IfNode(ASTNode):
         
         return self.type
 
-class ForNode(ASTNode):
+class ForNode(ASTNode): # Representa o for
     def __init__(self):
         super().__init__('for')
         self.type = None
@@ -883,7 +899,7 @@ class ForNode(ASTNode):
         self.type = body_type
         return self.type
 
-class StringNode(ASTNode):
+class StringNode(ASTNode): # Representa um literal de string
     def __init__(self, value):
         super().__init__(value)
         self.type = STRING_TYPE
@@ -891,12 +907,12 @@ class StringNode(ASTNode):
     def check_types(self):
         return self.type
 
-class MemoryStoreNode(ASTNode):
+class MemoryStoreNode(ASTNode): # Representa a recuperação de um valor da "memória" 
     def __init__(self):
         super().__init__('MEM_STORE')
         self.type = VOID_TYPE
 
-    def check_types(self):
+    def check_types(self): 
         if len(self.children) != 1:
             raise ValueError("Memory store node requires exactly one value to store")
         
@@ -907,7 +923,7 @@ class MemoryStoreNode(ASTNode):
         self.type = FLOAT_TYPE
         return self.type
 
-class MemoryRetrieveNode(ASTNode):
+class MemoryRetrieveNode(ASTNode): # Representa a recuperação de um resultado anterior 
     def __init__(self):
         super().__init__('MEM_RETRIEVE')
         self.type = FLOAT_TYPE
@@ -974,7 +990,10 @@ def print_first_follow_sets():
         print(f"{Fore.GREEN}FOLLOW({non_terminal}){Style.RESET_ALL} = {sorted(list(follow_sets.get(non_terminal)))}")
     print()
 
+# Compatibilidade de tipos entre operandos e operadores
+# Class Sequent e TypeInferece implementam o sistema de inferência de tipos
 class Sequent:
+    # Representa um sequente na lógica de tipos, no formato "{Contexto} ⊢ Expressão : Tipo".
     def __init__(self, context: Dict[str, Type], expr: str, type_: Type):
         self.context = context
         self.expr = expr
@@ -984,6 +1003,7 @@ class Sequent:
         context_str = ", ".join(f"{var}: {type_}" for var, type_ in self.context.items())
         return f"{{{context_str}}} ⊢ {self.expr} : {self.type}"
 
+# CLass TypeInferece classe que executa a inferência de tipos
 class TypeInference:
     def __init__(self):
         self.derivations = []
@@ -991,6 +1011,9 @@ class TypeInference:
     def _add_derivation(self, sequent: Sequent):
         self.derivations.append(sequent)
 
+# Métodos de regras 
+# Cada um desses métodos implementa uma regra de inferência de tipo específica para um tipo de nó da AST 
+# (e.g., para variáveis, números, operações binárias.
     def var_rule(self, var: str, context: Dict[str, Type]) -> Optional[Sequent]:
         if var in context:
             sequent = Sequent(context, var, context[var])
